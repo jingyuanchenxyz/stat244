@@ -1,2 +1,1 @@
-# stat244
-STAT 244 Presentation
+# STAT 244 Presentation on RMT and applications in Julia
