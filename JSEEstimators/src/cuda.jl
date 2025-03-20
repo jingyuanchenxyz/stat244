@@ -18,11 +18,15 @@ function jse_estimator_cuda(S::Matrix{T}, n::Int) where T <: AbstractFloat
     # move to GPU
     d_S = CuMatrix(Symmetric(S))
     
-    #  eigendecomposition on GPU
-    F = CUDA.CUSOLVER.syevd!('V', 'U', d_S)
+    # eigendecomposition on GPU
+    values, vectors = CUDA.CUSOLVER.syevd!('V', 'U', d_S)
     
-    λ² = Array(F.values[end])
-    h = Array(F.vectors[:, end])
+    # batch transfer to CPU to avoid scalar indexing on GPU arr
+    cpu_values = Array(values)
+    cpu_vectors = Array(vectors)
+    
+    λ² = cpu_values[end]
+    h = cpu_vectors[:, end]
     
     if sum(h) < 0
         h = -h
@@ -69,11 +73,14 @@ function factor_cov_matrix_cuda(S::Matrix{T}, n::Int; method=:jse) where T <: Ab
     
     d_S = CuMatrix(Symmetric(S))
     
-    F = CUDA.CUSOLVER.syevd!('V', 'U', d_S)
+    values, vectors = CUDA.CUSOLVER.syevd!('V', 'U', d_S)
     
-    #move back to cpu
-    λ² = Array(F.values[end])
-    h = Array(F.vectors[:, end])
+    # back to CPU to avoid scalar indexing
+    cpu_values = Array(values)
+    cpu_vectors = Array(vectors)
+    
+    λ² = cpu_values[end]
+    h = cpu_vectors[:, end]
     
     # Eq. 31
     ℓ² = (tr(S) - λ²) / (n - 1)
@@ -92,7 +99,12 @@ function factor_cov_matrix_cuda(S::Matrix{T}, n::Int; method=:jse) where T <: Ab
     d_b = CuVector(b)
     
     d_bb_t = d_b * d_b'
-    d_Σ_hat = (λ² - ℓ²) * d_bb_t + (n/p) * ℓ² * CUDA.I(p)
+    
+    # Create identity matrix on CPU and transfer to GPU
+    # This avoids scalar indexing when adding the identity matrix
+    eye_cpu = Matrix{T}(I, p, p)
+    d_eye = CuMatrix(eye_cpu)
+    d_Σ_hat = (λ² - ℓ²) * d_bb_t + (n/p) * ℓ² * d_eye
     
     return Array(d_Σ_hat)
 end
@@ -120,7 +132,7 @@ function min_variance_portfolio_cuda(Σ::Matrix{T}) where T <: AbstractFloat
     d_Σ_inv = CUDA.inv(d_Σ)
     
     d_numerator = d_Σ_inv * d_ones
-    denominator = (d_ones' * d_numerator)[1]  # Scalar result
+    denominator = d_ones' * d_numerator
     d_w = d_numerator ./ denominator
     
     return Array(d_w)
